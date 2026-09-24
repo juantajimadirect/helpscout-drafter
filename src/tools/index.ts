@@ -981,9 +981,10 @@ export class ToolHandler {
         ...baseParams,
         status: input.status,
       });
-      conversations = response._embedded?.conversations || [];
+      // Help Scout ignores `size` on /conversations (25 per page) - honor limit here
+      conversations = (response._embedded?.conversations || []).slice(0, input.limit);
       searchedStatuses = [input.status];
-      pagination = response.page;
+      pagination = { ...(response.page || {}), returned: conversations.length, requestedLimit: input.limit };
     } else {
       // No status specified: search all statuses in parallel
       const statuses = ['active', 'pending', 'closed'] as const;
@@ -1249,17 +1250,32 @@ export class ToolHandler {
 
   private async getThreads(args: unknown): Promise<CallToolResult> {
     const input = GetThreadsInputSchema.parse(args);
-    
-    const response = await helpScoutClient.get<PaginatedResponse<Thread>>(
+
+    // Help Scout returns 25 threads per page regardless of `size`. Without a cursor,
+    // fetch every page so long tickets come back whole (the old behaviour silently
+    // dropped everything past 25 unless the caller remembered to page).
+    const firstPage = this.parseCursorToPage(input.cursor);
+    let response = await helpScoutClient.get<PaginatedResponse<Thread>>(
       `/conversations/${input.conversationId}/threads`,
-      {
-        page: this.parseCursorToPage(input.cursor),
-        size: input.limit,
-      }
+      { page: firstPage, size: input.limit }
     );
+    let all: Thread[] = [...(response._embedded?.threads || [])];
+    let pagesFetched = 1;
+    const totalPages = Number(response.page?.totalPages || 1);
+    if (!input.cursor && totalPages > 1) {
+      for (let p = 2; p <= Math.min(totalPages, 40); p++) {
+        const next = await helpScoutClient.get<PaginatedResponse<Thread>>(
+          `/conversations/${input.conversationId}/threads`,
+          { page: p, size: input.limit }
+        );
+        all = all.concat(next._embedded?.threads || []);
+        pagesFetched++;
+      }
+      response = { ...response, page: { ...(response.page || {}), pagesFetched, complete: pagesFetched >= totalPages } as any, _links: undefined } as any;
+    }
 
     // Sort chronologically (oldest first) for readable conversation flow
-    const threads = (response._embedded?.threads || [])
+    const threads = all
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     
     // Redact PII if configured
