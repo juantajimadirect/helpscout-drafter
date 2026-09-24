@@ -4,8 +4,7 @@
       "command": "bash",
       "args": [
         "-c",
-        "cd \"$(dirname \"$0\")\" 2>/dev/null || true; [ -d node_modules ] || npm ci --no-audit --no-fund >&2; [ -f dist/index.js ] || npm run build >&2; exec node dist/index.js",
-        ".mcp.json"
+        "cmp -s package-lock.json node_modules/.installed-lock 2>/dev/null || { npm ci --no-audit --no-fund >&2 && cp package-lock.json node_modules/.installed-lock; }; npm run build >&2; exec node dist/index.js"
       ],
       "env": {
         "HELPSCOUT_APP_ID": "${HELPSCOUT_APP_ID}",
