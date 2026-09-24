@@ -277,6 +277,9 @@ export const ListAllInboxesInputSchema = z.object({
 export const CreateNoteInputSchema = z.object({
   conversationId: z.string().regex(/^\d+$/, 'Conversation ID must be numeric'),
   text: z.string().min(1, 'Note text cannot be empty'),
+  // Tajima 9/23: files on the server's disk to attach to the note (e.g. a receipt PDF
+  // produced by receipts/generate_receipt.py). Read + base64'd here, never by the model.
+  attachmentPaths: z.array(z.string().min(1)).max(5).optional(),
 });
 
 export const UpdateConversationTagsInputSchema = z.object({

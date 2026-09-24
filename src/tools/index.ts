@@ -567,6 +567,11 @@ export class ToolHandler {
               type: 'string',
               description: 'The note text content (supports HTML)',
             },
+            attachmentPaths: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Optional: absolute paths of files on this machine to attach to the note (up to 5, 10 MB each), e.g. a receipt PDF from receipts/generate_receipt.py',
+            },
           },
           required: ['conversationId', 'text'],
         },
@@ -2281,9 +2286,21 @@ export class ToolHandler {
   private async createNote(args: unknown): Promise<CallToolResult> {
     const input = CreateNoteInputSchema.parse(args);
 
+    // Attachments: Help Scout takes { fileName, mimeType, data(base64) } per file on the note.
+    const attachments: Array<{ fileName: string; mimeType: string; data: string }> = [];
+    for (const p of input.attachmentPaths || []) {
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const buf = await fs.readFile(p);
+      if (buf.length > 10 * 1024 * 1024) throw new Error(`attachment too large (${buf.length} bytes): ${p}`);
+      const ext = path.extname(p).toLowerCase();
+      const mimeType = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg' : ext === '.txt' ? 'text/plain' : 'application/octet-stream';
+      attachments.push({ fileName: path.basename(p), mimeType, data: buf.toString('base64') });
+    }
+
     await helpScoutClient.post(
       `/conversations/${input.conversationId}/notes`,
-      { text: input.text }
+      attachments.length ? { text: input.text, attachments } : { text: input.text }
     );
 
     return {
@@ -2293,7 +2310,8 @@ export class ToolHandler {
           text: JSON.stringify({
             success: true,
             conversationId: input.conversationId,
-            message: 'Note added successfully',
+            attachments: attachments.map(a => a.fileName),
+            message: attachments.length ? `Note added with ${attachments.length} attachment(s)` : 'Note added successfully',
           }, null, 2),
         },
       ],
